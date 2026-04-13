@@ -1,0 +1,33 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS 
+.DS_Store
+
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# Data and Databases
+data/
+db/*.sqlite3
+db/*.db
+logs/
+*.log
+
+# Distribution / packaging
+node_modules/
+build/
+dist/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Local configuration
+.env
+.idea/
+.vscode/
