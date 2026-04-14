@@ -1,20 +1,32 @@
 import torch
 import torch.nn as nn
 class FSQ(nn.Module):
-    def __init__(self,levels):
+    def __init__(self, levels):
         super().__init__()
-        self.register_buffer("levels",torch.tensor(levels,dtype=torch.float32))
-    def bound(self,z):
-        half=(self.levels-1)/2
-        return torch.tanh(z)*half
-        
-    def quantize(self,z):
-        z_bounded=self.bound(z)
-        zhat=torch.round(z_bounded)
-        return z_bounded+(zhat-z_bounded).detach()
-    def forward(self,z):
-        codes=self.quantize(z)
-        return codes
+        self.register_buffer("levels", torch.tensor(levels, dtype=torch.float32))
+        # This basis is what lets us turn [1, 2, 3] into a single unique integer
+        basis = torch.tensor([1.0] + [levels[i] for i in range(len(levels)-1)], dtype=torch.float32).cumprod(0)
+        self.register_buffer("basis_buf", basis)
+
+    def bound(self, z):
+        half = (self.levels - 1) / 2
+        return torch.tanh(z) * half
+
+    def quantize(self, z):
+        z_bounded = self.bound(z)
+        zhat = torch.round(z_bounded)
+        return z_bounded + (zhat - z_bounded).detach()
+
+    def codes_to_indices(self, codes):
+        half = (self.levels - 1) / 2
+        shifted = codes + half
+        return (shifted * self.basis_buf).sum(dim=-1).long()
+
+    def forward(self, z):
+        codes = self.quantize(z)
+        indices = self.codes_to_indices(codes)
+        return codes, indices 
+
 
 class Encoder(nn.Module):
     def __init__(self,in_channels=3,latent_dim=10):
@@ -67,15 +79,16 @@ class Decoder(nn.Module):
         return self.net(h)
 
 class VisualTokenizer(nn.Module):
-    def __init__(self,levels=[5,5,5,5,5,5,5,5,5,5]):
+    def __init__(self, levels=[5, 5, 5, 5, 5, 5, 5, 5, 5, 5]):
         super().__init__()
-        self.encoder=Encoder(latent_dim=len(levels))
-        self.fsq=FSQ(levels)
-        self.decoder=Decoder(latent_dim=len(levels))
-    
-    def forward(self,x):
-        z=self.encoder(x)
-        codes=self.fsq(z)
-        x_recon=self.decoder(codes)
-        return x_recon,codes
+        self.encoder = Encoder(latent_dim=len(levels))
+        self.fsq = FSQ(levels)
+        self.decoder = Decoder(latent_dim=len(levels))
+
+    def forward(self, x):
+        z = self.encoder(x)
+        codes, indices = self.fsq(z) 
+        x_recon = self.decoder(codes)
+        return x_recon, codes, indices 
+
 
