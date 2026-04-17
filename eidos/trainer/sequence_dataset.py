@@ -4,13 +4,15 @@ import json
 from torch.utils.data import Dataset
 from eidos.models.tokenizer import VisualTokenizer
 from eidos.models.actions import ActionTokenizer
+from eidos.models.text import TextTokenizer
 from PIL import Image
-from torchvision import transforms 
+from torchvision import transforms
 
 class MarrowSequenceDataset(Dataset):
     def __init__(self, db_path, checkpoint_path):
         self.db_path = db_path
         self.action_tokenizer = ActionTokenizer()
+        self.text_tokenizer = TextTokenizer()
         self.vis_model = VisualTokenizer()
         self.vis_model.load_state_dict(torch.load(checkpoint_path, map_location="cpu"))
         self.vis_model.eval()
@@ -43,20 +45,20 @@ class MarrowSequenceDataset(Dataset):
         window = session[start_idx : start_idx + 16]
         full_sequence = []
         for row in window:
+            synthetic_goal = f"Focus on {row['app_name']}"
+            text_tokens = self.text_tokenizer.encode(synthetic_goal)
+
             image = Image.open(row["frame_path"]).convert("RGB")
             img_tensor = self.transform(image).unsqueeze(0)
-            
+
             with torch.no_grad():
-                # Grab 'codes' instead of 'indices'
                 x_recon, codes, _ = self.vis_model(img_tensor)
-                
-                # Shift by +3 so tokens are [1, 2, 3, 4, 5]
-                # Flatten (1, 40, 10) into 400 separate tokens
                 vis_tokens = (codes + 3).view(-1).long().tolist()
-                
+
             act_tokens = self.action_tokenizer.encode_observation(row)
-            
-            # Pack: [400 Visuals] -> [Separator] -> [Actions]
+
+            full_sequence.extend(text_tokens)
+            full_sequence.append(10001)
             full_sequence.extend(vis_tokens)
             full_sequence.append(10000)
             full_sequence.extend(act_tokens)

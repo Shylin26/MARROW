@@ -8,6 +8,7 @@ from eidos.models.world import WorldModel
 from eidos.models.actions import ActionTokenizer
 from eidos.models.tokenizer import VisualTokenizer
 from eidos.collector.screen import ScreenCollector
+from eidos.models.text import TextTokenizer
 
 class MarrowAgent:
     def __init__(self,world_checkpoint,vis_checkpoint):
@@ -15,6 +16,7 @@ class MarrowAgent:
         print(f"Agent initializing on {self.device}...")
         #Initialise tokenizer baby
         self.action_tokenizer=ActionTokenizer()
+        self.text_tokenizer = TextTokenizer()
         self.vis_model=VisualTokenizer().to(self.device)
         self.vis_model.load_state_dict(torch.load(vis_checkpoint,map_location=self.device))
         self.vis_model.eval()
@@ -36,23 +38,26 @@ class MarrowAgent:
             vis_tokens=(codes+3).view(-1).long().tolist()
         return vis_tokens
     
-    def step(self):
+    def step(self, instruction=""):
         print("\nAgent observing the screen...")
-        vis_tokens=self.get_visual_state()
-        sequence=vis_tokens+[10000]
-        print("Agent thinking...")
+        vis_tokens = self.get_visual_state()
+        
+        text_tokens = self.text_tokenizer.encode(instruction)
+        
+        sequence = text_tokens + [10001] + vis_tokens + [10000]
+        
+        print(f"Agent thinking about: '{instruction}'...")
         for _ in range(5):
-            seq_tensor=torch.tensor([sequence],dtype=torch.long).to(self.device)
+            seq_tensor = torch.tensor([sequence], dtype=torch.long).to(self.device)
             with torch.no_grad():
-                logits=self.world_model(seq_tensor)
-                next_token_logits=logits[0,-1,:]
-                probs=F.softmax(next_token_logits,dim=-1)
-                next_token=torch.multinomial(probs,num_samples=1).item()
+                logits = self.world_model(seq_tensor)
+                next_token_logits = logits[0, -1, :]
+                probs = F.softmax(next_token_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1).item()
                 sequence.append(next_token)
-        # Move the decoding and logic outside the 5-step loop!
-        action_tokens=sequence[-5:]
+        action_tokens = sequence[-5:]
         print(f"Predicted action tokens: {action_tokens}")
-        action_obj=self.action_tokenizer.decode_action(action_tokens)
+        action_obj = self.action_tokenizer.decode_action(action_tokens)
         print(f"Executing action: {action_obj}")
         self.execute_action(action_obj)
     def execute_action(self,action_obj):
@@ -72,16 +77,14 @@ class MarrowAgent:
             except Exception as e:
                 print(f"Skipping unknown key:{key}")
 
-if __name__=="__main__":
-    print("Starting Marrow Agent...")
+if __name__ == "__main__":
+    print("Starting MARROW Agent...")
     vis_check = "db/tokenizer_epoch_20.pt"
-    world_check = "db/world_model_epoch_10.pt" 
+    world_check = "db/world_model_epoch_10.pt"
     try:
-        agent=MarrowAgent(world_checkpoint=world_check,vis_checkpoint=vis_check)
+        agent = MarrowAgent(world_checkpoint=world_check, vis_checkpoint=vis_check)
+        instruction = input("Give MARROW an instruction: ")
         while True:
-            agent.step()
+            agent.step(instruction=instruction)
     except Exception as e:
-        print(f"Agent failed to start :{e}")
-
-
-
+        print(f"Agent failed to start: {e}")
