@@ -1,6 +1,6 @@
 import torch
 class TextTokenizer:
-    def __init__(self,max_length=32,offset=9000):
+    def __init__(self,max_length=32,offset=5000):
         self.max_length=max_length
         self.offset=offset
     def encode(self,text):

@@ -26,40 +26,82 @@ class MarrowAgent:
         self.world_model.load_state_dict(torch.load(world_checkpoint, map_location=self.device))
         self.world_model.eval()
         self.transform=transforms.ToTensor()
-        self.screen_collector=ScreenCollector()
+        self.screen_collector=ScreenCollector("data/agent_frames")
         pyautogui.FAILSAFE=True
+        
+        # 3. Memory & Sampling Control
+        from collections import deque
+        self.vis_history = deque(maxlen=2) 
+        self.act_history = deque(maxlen=2)
+        self.temperature = 0.7
+        self.top_k = 50
 
     def get_visual_state(self):
-        screenshot_path=self.screen_collector.capture_frame()
+        screenshot_path=self.screen_collector.capture("live_view")
+        # Save a copy as 'latest' for the user to debug
+        import shutil
+        shutil.copy(screenshot_path, "data/agent_frames/latest_observation.jpg")
+        
         image=Image.open(screenshot_path).convert("RGB")
         img_tensor=self.transform(image).unsqueeze(0).to(self.device)
         with torch.no_grad():
             _,codes,_=self.vis_model(img_tensor)
-            vis_tokens=(codes+3).view(-1).long().tolist()
+            vis_tokens=(codes+6000).reshape(-1).long().tolist()
         return vis_tokens
     
     def step(self, instruction=""):
-        print("\nAgent observing the screen...")
+        print("\n--- MARROW STEP ---")
         vis_tokens = self.get_visual_state()
         
         text_tokens = self.text_tokenizer.encode(instruction)
         
-        sequence = text_tokens + [10001] + vis_tokens + [10000]
+        # Build sequence with history: [Goal][Vis_old][Act_old][Goal][Vis_now]
+        sequence = []
+        if len(self.vis_history) > 0:
+            for i in range(len(self.vis_history)):
+                sequence.extend(text_tokens)
+                sequence.append(10001)
+                sequence.extend(self.vis_history[i])
+                sequence.append(10000)
+                if i < len(self.act_history):
+                    sequence.extend(self.act_history[i])
         
-        print(f"Agent thinking about: '{instruction}'...")
+        # Add current observation
+        sequence.extend(text_tokens)
+        sequence.append(10001)
+        sequence.extend(vis_tokens)
+        sequence.append(10000)
+        
+        # Update history for next step
+        self.vis_history.append(vis_tokens)
+            
+        print(f"Thinking: '{instruction}' (Continuity: {len(self.act_history)} prev actions)...")
+        current_action_tokens = []
         for _ in range(5):
-            seq_tensor = torch.tensor([sequence], dtype=torch.long).to(self.device)
+            seq_tensor = torch.tensor([sequence + current_action_tokens], dtype=torch.long).to(self.device)
+            if seq_tensor.size(1) > 1024:
+                seq_tensor = seq_tensor[:, -1024:]
+                
             with torch.no_grad():
                 logits = self.world_model(seq_tensor)
-                next_token_logits = logits[0, -1, :]
+                next_token_logits = logits[0, -1, :] / self.temperature
+                
+                v, _ = torch.topk(next_token_logits, self.top_k)
+                next_token_logits[next_token_logits < v[..., -1, None]] = -float('Inf')
+                
                 probs = F.softmax(next_token_logits, dim=-1)
                 next_token = torch.multinomial(probs, num_samples=1).item()
-                sequence.append(next_token)
-        action_tokens = sequence[-5:]
-        print(f"Predicted action tokens: {action_tokens}")
-        action_obj = self.action_tokenizer.decode_action(action_tokens)
-        print(f"Executing action: {action_obj}")
+                current_action_tokens.append(next_token)
+        
+        self.act_history.append(current_action_tokens)
+        
+        action_obj = self.action_tokenizer.decode_action(current_action_tokens)
+        print(f"Action: {action_obj}")
+        print(f"Confidence: {probs.max().item():.2%}")
+        
         self.execute_action(action_obj)
+        import time
+        time.sleep(1)
     def execute_action(self,action_obj):
         if action_obj["dx"]!=0 or action_obj["dy"]!=0:
             current_x,current_y=pyautogui.position()

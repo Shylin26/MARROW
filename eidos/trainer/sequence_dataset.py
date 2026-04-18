@@ -1,6 +1,7 @@
 import torch
 import sqlite3
 import json
+import random
 from torch.utils.data import Dataset
 from eidos.models.tokenizer import VisualTokenizer
 from eidos.models.actions import ActionTokenizer
@@ -31,7 +32,7 @@ class MarrowSequenceDataset(Dataset):
             if sid not in sessions:
                 sessions[sid] = []
             sessions[sid].append(row)
-        valid_sessions = [s for s in sessions.values() if len(s) >= 16]
+        valid_sessions = [s for s in sessions.values() if len(s) >= 2]
         conn.close()
         print(f"Loaded {len(valid_sessions)} valid recording sessions.")
         return valid_sessions
@@ -41,11 +42,16 @@ class MarrowSequenceDataset(Dataset):
     
     def __getitem__(self, idx):
         session = self.sessions[idx]
-        start_idx = torch.randint(0, len(session) - 16 + 1, (1,)).item()
-        window = session[start_idx : start_idx + 16]
+        start_idx = torch.randint(0, len(session) - 2 + 1, (1,)).item()
+        window = session[start_idx : start_idx + 2]
         full_sequence = []
         for row in window:
-            synthetic_goal = f"Focus on {row['app_name']}"
+            app = row['app_name'] if row['app_name'] else "Desktop"
+            if row['mouse_events'] and "click" in row['mouse_events']:
+                templates = [f"Click on {app}", f"Interact with {app}", f"Select element in {app}"]
+                synthetic_goal = random.choice(templates)
+            else:
+                synthetic_goal = f"Use {app}"
             text_tokens = self.text_tokenizer.encode(synthetic_goal)
 
             image = Image.open(row["frame_path"]).convert("RGB")
@@ -53,9 +59,9 @@ class MarrowSequenceDataset(Dataset):
 
             with torch.no_grad():
                 x_recon, codes, _ = self.vis_model(img_tensor)
-                vis_tokens = (codes + 3).view(-1).long().tolist()
+                vis_tokens = (codes + 6000).reshape(-1).long().tolist()
 
-            act_tokens = self.action_tokenizer.encode_observation(row)
+            act_tokens = self.action_tokenizer.encode_observation(dict(row))
 
             full_sequence.extend(text_tokens)
             full_sequence.append(10001)

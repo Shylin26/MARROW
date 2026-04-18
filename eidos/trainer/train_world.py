@@ -11,6 +11,9 @@ def train_world_model():
     db_path="db/marrow.db"
     tokenizer_checkpoint="db/tokenizer_epoch_20.pt" 
     dataset=MarrowSequenceDataset(db_path, tokenizer_checkpoint)
+    if len(dataset) == 0:
+        print("No valid sessions in the database. Please run the data collector first!")
+        return
     dataloader=DataLoader(dataset,batch_size=1,shuffle=True)
     model=WorldModel().to(device)
     optimizer=optim.AdamW(model.parameters(),lr=1e-4)
@@ -27,7 +30,7 @@ def train_world_model():
             optimizer.zero_grad()
             logits=model(x)
             B,T,C=logits.shape
-            logits_flat=logits.view(B*T,C)
+            logits_flat=logits.reshape(B*T,C)
             y_flat=y.reshape(-1)
             loss=criterion(logits_flat,y_flat)
             loss.backward()

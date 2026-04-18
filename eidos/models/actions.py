@@ -1,9 +1,15 @@
 import json
+import pyautogui
 
 class ActionTokenizer:
-    def __init__(self, screen_width=1440, screen_height=900):
-        self.screen_width = screen_width
-        self.screen_height = screen_height
+    def __init__(self, screen_width=None, screen_height=None):
+        if screen_width is None or screen_height is None:
+            sw, sh = pyautogui.size()
+            self.screen_width = sw
+            self.screen_height = sh
+        else:
+            self.screen_width = screen_width
+            self.screen_height = screen_height
         self.MOUSE_GRID_START = 0
         self.MOUSE_EVENT_START = 256
         self.KEYBOARD_START = 300
@@ -43,19 +49,68 @@ class ActionTokenizer:
         return self.app_vocab[app_name]
 
     def encode_observation(self, data):
-        tokens = []
-        tokens.append(self.encode_app(data.get("app_name")))
-        tokens.append(self.encode_mouse_pos(data.get("mouse_x"), data.get("mouse_y")))
-        keys = data.get("keystrokes", [])
-        if isinstance(keys, str):
-            try: keys = json.loads(keys)
-            except: keys = []
-        for k in keys:
-            tokens.append(self.encode_keyboard(k))
+        """Standardized 5-token action packet: [app, mouse_pos, click, key, special]"""
+        tokens = [0] * 5
+        
+        # 1. App
+        tokens[0] = self.encode_app(data.get("app_name"))
+        
+        # 2. Mouse Pos
+        tokens[1] = self.encode_mouse_pos(data.get("mouse_x", 0), data.get("mouse_y", 0))
+        
+        # 3. Click (0: none, 1: left, 2: right)
         events = data.get("mouse_events", [])
         if isinstance(events, str):
             try: events = json.loads(events)
             except: events = []
-        for e in events:
-            tokens.append(self.encode_mouse_event(e.get("type")))
+        if events:
+            ev_type = events[0].get("type", "")
+            tokens[2] = self.MOUSE_EVENT_START + (1 if ev_type == "click" else 2)
+            
+        # 4. Keyboard Key (ASCII)
+        keys = data.get("keystrokes", [])
+        if isinstance(keys, str):
+            try: keys = json.loads(keys)
+            except: keys = []
+        if keys:
+            tokens[3] = self.encode_keyboard(keys[0])
+            
         return tokens
+
+    def decode_action(self, tokens):
+        """Inverts the 5-token packet back into a dictionary for pyautogui."""
+        # tokens: [app, mouse_pos, mouse_event, key, special]
+        app_token, pos_token, event_token, key_token, _ = tokens
+        
+        # 1. Decode Mouse Position
+        grid_y = pos_token // 16
+        grid_x = pos_token % 16
+        # Convert grid back to relative movement (or absolute)
+        # We'll treat our grid as delta-ish or simple mapping
+        # For now let's map it to 16x16 segments of the screen
+        target_x = int((grid_x / 15) * self.screen_width)
+        target_y = int((grid_y / 15) * self.screen_height)
+        
+        current_x, current_y = pyautogui.position()
+        dx = target_x - current_x
+        dy = target_y - current_y
+        
+        # 2. Decode Click
+        click = "none"
+        if event_token == self.MOUSE_EVENT_START + 1:
+            click = "left"
+        elif event_token == self.MOUSE_EVENT_START + 2:
+            click = "right"
+            
+        # 3. Decode Key
+        key = "none"
+        if key_token >= self.KEYBOARD_START:
+            val = key_token - self.KEYBOARD_START
+            if val < 200: # Normal ASCII
+                key = chr(val)
+            else: # Special Keys
+                # Reverse the map from encode_keyboard
+                special_rev = {1: "enter", 2: "space", 3: "backspace", 4: "shift"} # Simplified
+                key = special_rev.get(val - 200, "none")
+
+        return {"dx": dx, "dy": dy, "click": click, "key": key}

@@ -85,6 +85,22 @@ class MarrowEngine:
                 logging.error(f"Error in engine heartbeat: {e}")
                 time.sleep(1.0)
 
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    
+    engine = MarrowEngine()
+    try:
+        engine.start()
+        print("MARROW Engine is running... Press Ctrl+C to stop.")
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        engine.stop()
+        print("\nMARROW stopped clean.")
+
 
 
 
